@@ -1,34 +1,66 @@
 export default async function handler(req, res) {
-  const response = await fetch(
-    "https://api.brevo.com/v3/emailCampaigns?limit=50",
-    {
-      headers: {
-        "api-key": process.env.BREVO_API_KEY,
-      },
+  try {
+    const response = await fetch(
+      "https://api.brevo.com/v3/emailCampaigns?limit=50",
+      {
+        headers: {
+          "api-key": process.env.BREVO_API_KEY,
+          "accept": "application/json",
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    // 🔍 DEBUG SAFE (utile sur Vercel logs)
+    console.log("Brevo response:", data);
+
+    if (!data || !Array.isArray(data.campaigns)) {
+      return res.status(500).json({
+        error: "Invalid Brevo response",
+        raw: data,
+      });
     }
-  );
 
-  const data = await response.json();
+    // 🧠 1. Filtrer uniquement les campagnes envoyées
+    const sentCampaigns = data.campaigns.filter(
+      (c) => c.status === "sent"
+    );
 
-  const campaigns = data.campaigns;
+    if (sentCampaigns.length === 0) {
+      return res.status(404).json({
+        error: "No sent campaigns found",
+      });
+    }
 
-  if (!campaigns || campaigns.length === 0) {
-    return res.status(404).send("No campaigns");
+    // 📅 2. Trier par date d’envoi (IMPORTANT FIX)
+    const latest = sentCampaigns.sort((a, b) => {
+      return new Date(b.sentDate) - new Date(a.sentDate);
+    })[0];
+
+    // 🔗 3. Construire le lien proprement
+    const url =
+      latest.shareLink ||
+      latest.archiveUrl ||
+      latest.previewUrl ||
+      null;
+
+    if (!url) {
+      return res.status(404).json({
+        error: "No usable URL found for campaign",
+        campaign: latest,
+      });
+    }
+
+    // 🚀 4. Redirection directe (parfait pour Webflow)
+    return res.redirect(302, url);
+
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Server error",
+      details: err.message,
+    });
   }
-
-  // dernière campagne
-  const latest = campaigns[0];
-
-  // ⚠️ parfois il faut construire le lien différemment
-  const url =
-    latest.shareLink ||
-    latest.archiveUrl ||
-    latest.previewUrl;
-
-  if (!url) {
-    return res.status(404).send("No URL found");
-  }
-
-  // redirection directe
-  res.redirect(302, url);
 }
